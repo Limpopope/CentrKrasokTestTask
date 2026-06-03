@@ -7,7 +7,7 @@ if sys.platform == "win32":
 import os
 import logging
 from collections import defaultdict
-from openai import OpenAI
+from openai import AsyncOpenAI  # Использовать AsyncOpenAI вместо OpenAI
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from company_knowledge import COMPANY_KNOWLEDGE
@@ -20,7 +20,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ─── OpenAI client ─────────────────────────────────────────────────────────────
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+# Инициализируем асинхронный клиент
+client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 # ─── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = f"""Ты — вежливый и компетентный AI-ассистент интернет-магазина «Центр Красок #1».
@@ -43,7 +44,8 @@ MAX_HISTORY = 10
 user_histories: dict[int, list[dict]] = defaultdict(list)
 
 
-def get_ai_response(user_id: int, user_message: str) -> str:
+# Делаем функцию асинхронной (добавили async)
+async def get_ai_response(user_id: int, user_message: str) -> str:
     history = user_histories[user_id]
 
     history.append({"role": "user", "content": user_message})
@@ -52,7 +54,8 @@ def get_ai_response(user_id: int, user_message: str) -> str:
         history = history[-(MAX_HISTORY * 2):]
         user_histories[user_id] = history
 
-    response = client.chat.completions.create(
+    # Добавили await перед вызовом OpenAI
+    response = await client.chat.completions.create(
         model="gpt-4o-mini",  # дешёвая и быстрая модель
         messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
         max_tokens=1024,
@@ -80,7 +83,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
     try:
-        reply = get_ai_response(user_id, user_text)
+        # Теперь здесь вызываем через await
+        reply = await get_ai_response(user_id, user_text)
     except Exception as e:
         logger.error(f"AI error for user {user_id}: {e}")
         reply = "Извините, произошла ошибка. Пожалуйста, попробуйте позже или свяжитесь с нами: +7 (777) 292-84-01"
@@ -97,6 +101,11 @@ async def handle_non_text(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 # ─── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
+    # Проверяем наличие токена перед стартом, чтобы бот не падал глубоко в библиотеке
+    if "TELEGRAM_BOT_TOKEN" not in os.environ:
+        logger.error("TELEGRAM_BOT_TOKEN не задан в переменных окружения!")
+        return
+        
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     app = ApplicationBuilder().token(token).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
